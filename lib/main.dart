@@ -7,16 +7,17 @@ import 'services/websocket_service.dart';
 import 'my_qr_code_screen.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-
+import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:flutter/foundation.dart'; // Pour kIsWeb
+import 'dart:io' show Platform;
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
 
 Future<void> _initNotifications() async {
   const AndroidInitializationSettings initializationSettingsAndroid =
-      AndroidInitializationSettings('@mipmap/ic_launcher'); // Utilise ton icône d'application
+      AndroidInitializationSettings('@mipmap/ic_launcher');
 
   const InitializationSettings initializationSettings =
       InitializationSettings(android: initializationSettingsAndroid);
@@ -24,16 +25,14 @@ Future<void> _initNotifications() async {
   await flutterLocalNotificationsPlugin.initialize(initializationSettings);
 }
 
-// Fonction pour afficher la notification locale
 Future<void> _showNotification(String senderName, String messageBody) async {
   const AndroidNotificationDetails androidPlatformChannelSpecifics =
       AndroidNotificationDetails(
-    'hush_chat_channel', // ID du canal
-    'Hush Messages',     // Nom du canal visible par l'utilisateur
+    'hush_chat_channel',
+    'Hush Messages',
     channelDescription: 'Notifications pour les messages chiffrés entrants',
     importance: Importance.max,
     priority: Priority.high,
-    // Tu peux customiser la couleur de la LED/accent si tu veux du style cyberpunk
     color: Color(0xFF7C4DFF), 
   );
 
@@ -41,19 +40,55 @@ Future<void> _showNotification(String senderName, String messageBody) async {
       NotificationDetails(android: androidPlatformChannelSpecifics);
 
   await flutterLocalNotificationsPlugin.show(
-    0, // ID de la notification
-    'Nouveau message de $senderName', // Titre
-    messageBody, // Corps du message (ou un texte générique si tu préfères garder le contenu masqué pour plus de vie privée : ex: "Nouveau message chiffré")
+    0,
+    'Nouveau message de $senderName',
+    messageBody,
     platformChannelSpecifics,
   );
 }
+
+Future<void> initializeBackgroundService() async {
+  final service = FlutterBackgroundService();
+
+  await service.configure(
+    androidConfiguration: AndroidConfiguration(
+      onStart: onStartBackgroundService,
+      autoStart: false,
+      isForegroundMode: true,
+      notificationChannelId: 'hush_foreground_channel',
+      initialNotificationTitle: 'Hush Sécurisé',
+      initialNotificationContent: 'La messagerie écoute en arrière-plan',
+      foregroundServiceNotificationId: 888,
+    ),
+    iosConfiguration: IosConfiguration(
+      autoStart: true,
+      onForeground: onStartBackgroundService,
+    ),
+  );
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // 1. Initialiser Hive pour Flutter
+  if (!kIsWeb && Platform.isAndroid) {
+    const AndroidNotificationChannel channel = AndroidNotificationChannel(
+      'hush_foreground_channel', // id
+      'Hush Service Arrière-plan', // nom
+      description: 'Canal utilisé pour maintenir Hush actif en arrière-plan',
+      importance: Importance.low, // Important pour un service de fond (évite les sons intempestifs en boucle)
+    );
+    final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+        FlutterLocalNotificationsPlugin();
+
+    await flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(channel);
+    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+      await initializeBackgroundService();
+    }
+  }
   await Hive.initFlutter();
 
-  // 2. Créer ou récupérer une clé de chiffrement sécurisée
   const secureStorage = FlutterSecureStorage(
     aOptions: AndroidOptions(
       encryptedSharedPreferences: true,
@@ -63,7 +98,6 @@ void main() async {
   
   Uint8List encryptionKey;
   if (encryptionKeyString == null) {
-    // Génère une clé aléatoire forte si elle n'existe pas encore
     final generatedKey = Hive.generateSecureKey();
     await secureStorage.write(
       key: 'hush_db_key', 
@@ -74,58 +108,57 @@ void main() async {
     encryptionKey = base64Url.decode(encryptionKeyString);
   }
 
-  // 3. Ouvrir la boîte Hive des messages de manière chiffrée (AES-256)
   await Hive.openBox(
     'chat_messages',
     encryptionCipher: HiveAesCipher(encryptionKey),
   );
 
-  // 4. Ouvrir la boîte Hive des contacts de manière chiffrée (AES-256) <--- AJOUTÉ ICI
   await Hive.openBox(
     'contacts_box',
     encryptionCipher: HiveAesCipher(encryptionKey),
   );
 
+  const AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+  
+  const InitializationSettings initializationSettings =
+      InitializationSettings(android: initializationSettingsAndroid);
+
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
-
-  
   const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Messagerie Chiffrée Anonyme',
-      // 1. Le thème clair (au cas où le téléphone est en mode clair)
-    theme: ThemeData(
-      brightness: Brightness.light,
-      primarySwatch: Colors.deepPurple,
-      scaffoldBackgroundColor: Colors.grey[100],
-      appBarTheme: const AppBarTheme(
-        backgroundColor: Colors.deepPurple,
-        foregroundColor: Colors.white,
+      theme: ThemeData(
+        brightness: Brightness.light,
+        primarySwatch: Colors.deepPurple,
+        scaffoldBackgroundColor: Colors.grey[100],
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.deepPurple,
+          foregroundColor: Colors.white,
+        ),
       ),
-    ),
-    
-    // 2. Le thème sombre (élégant, avec des nuances de gris sombre/noir)
-    darkTheme: ThemeData(
-      brightness: Brightness.dark,
-      primarySwatch: Colors.deepPurple,
-      scaffoldBackgroundColor: const Color(0xFF121212), // Noir mat très propre
-      cardColor: const Color(0xFF1E1E1E),
-      appBarTheme: const AppBarTheme(
-        backgroundColor: Color(0xFF1E1E1E),
-        foregroundColor: Colors.white,
+      darkTheme: ThemeData(
+        brightness: Brightness.dark,
+        primarySwatch: Colors.deepPurple,
+        scaffoldBackgroundColor: const Color(0xFF121212),
+        cardColor: const Color(0xFF1E1E1E),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFF1E1E1E),
+          foregroundColor: Colors.white,
+        ),
+        dialogTheme: const DialogThemeData(
+          backgroundColor: Color(0xFF1E1E1E),
+        ),
       ),
-      dialogTheme: const DialogThemeData(
-        backgroundColor: Color(0xFF1E1E1E),
-      ),
-    ),
-    
-    // 3. Suit automatiquement le réglage du téléphone (clair ou sombre)
-    themeMode: ThemeMode.system,
+      themeMode: ThemeMode.system,
       home: const HomeScreen(),
     );
   }
@@ -172,8 +205,18 @@ class _HomeScreenState extends State<HomeScreen> {
   String _myPubKey = '';
 
   final Map<String, Conversation> _conversations = {};
+  
+  // Map de ValueNotifiers pour suivre le statut en ligne de chaque contact en direct
+  final Map<String, ValueNotifier<bool>> _contactStatusNotifiers = {};
 
-@override
+  ValueNotifier<bool> getStatusNotifier(String contactId) {
+    if (!_contactStatusNotifiers.containsKey(contactId)) {
+      _contactStatusNotifiers[contactId] = ValueNotifier<bool>(false);
+    }
+    return _contactStatusNotifiers[contactId]!;
+  }
+
+  @override
   void initState() {
     super.initState();
     _initializeApp();
@@ -181,13 +224,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _initializeApp() async {
     await _initNotifications();
+    final service = FlutterBackgroundService();
+    bool isRunning = await service.isRunning();
+    if (!isRunning) {
+      service.startService();
+    }
     await _cryptoService.initUserIdentity();
     _myId = _cryptoService.userId;
     _myPubKey = await _cryptoService.getPublicKeyString();
 
-    // Charger les contacts sauvegardés localement
     await _loadSavedContacts();
-
     await _loadSavedMessages();
 
     setState(() {
@@ -206,12 +252,11 @@ class _HomeScreenState extends State<HomeScreen> {
         try {
           final decryptedText = await _cryptoService.decryptMessage(encryptedPayload, senderPubKey);
           
-          // 1. Sauvegarde locale chiffrée (Hive) pour le message reçu
           final messagesBox = Hive.box('chat_messages');
           messagesBox.add({
             'text': decryptedText,
             'isMe': false,
-            'conversationId': senderId, // Utile pour retrouver à quelle conversation il appartient
+            'conversationId': senderId,
             'timestamp': DateTime.now().toIso8601String(),
           });
 
@@ -219,7 +264,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
           setState(() {
             if (!_conversations.containsKey(senderId)) {
-              // Si le contact n'existe pas, on le crée et on le sauvegarde automatiquement
               _conversations[senderId] = Conversation(
                 contactId: senderId,
                 contactName: 'Contact ($senderId)',
@@ -235,7 +279,20 @@ class _HomeScreenState extends State<HomeScreen> {
         } catch (e) {
           print('Erreur de déchiffrement : $e');
         }
-      } else if (data['type'] == 'error') {
+      } 
+      else if (data['type'] == 'info') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(data['message']), backgroundColor: Colors.blue.shade700),
+        );
+      } 
+      else if (data['type'] == 'status_response') {
+        final String targetId = data['targetId'];
+        final bool isOnline = data['isOnline'];
+        
+        // Mise à jour en direct du ValueNotifier
+        getStatusNotifier(targetId).value = isOnline;
+      }
+      else if (data['type'] == 'error') {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Erreur serveur : ${data['message']}'), backgroundColor: Colors.red),
         );
@@ -243,242 +300,199 @@ class _HomeScreenState extends State<HomeScreen> {
     };
   }
 
-  // Charger les contacts depuis le stockage sécurisé
-Future<void> _loadSavedContacts() async {
-  final contactsBox = Hive.box('contacts_box');
-  final savedData = contactsBox.get('saved_contacts');
+  Future<void> _loadSavedContacts() async {
+    final contactsBox = Hive.box('contacts_box');
+    final savedData = contactsBox.get('saved_contacts');
 
-  if (savedData != null) {
-    final Map<String, dynamic> loadedMap = Map<String, dynamic>.from(savedData);
-    
-    setState(() {
-      _conversations.clear();
-      loadedMap.forEach((key, value) {
-        final contactData = Map<String, dynamic>.from(value);
-        _conversations[key] = Conversation(
-          contactId: contactData['contactId'],
-          contactName: contactData['contactName'],
-          publicKey: contactData['publicKey'],
-          messages: [], // Les messages seront chargés par _loadSavedMessages juste après
-        );
+    if (savedData != null) {
+      final Map<String, dynamic> loadedMap = Map<String, dynamic>.from(savedData);
+      
+      setState(() {
+        _conversations.clear();
+        loadedMap.forEach((key, value) {
+          final contactData = Map<String, dynamic>.from(value);
+          _conversations[key] = Conversation(
+            contactId: contactData['contactId'],
+            contactName: contactData['contactName'],
+            publicKey: contactData['publicKey'],
+            messages: [],
+          );
+        });
       });
-    });
+    }
   }
-}
 
-Future<void> _loadSavedMessages() async {
-  final messagesBox = Hive.box('chat_messages');
-  
-  // Parcourir tous les messages enregistrés dans la base locale
-  for (var item in messagesBox.values) {
-    final messageMap = Map<String, dynamic>.from(item as Map);
+  Future<void> _loadSavedMessages() async {
+    final messagesBox = Hive.box('chat_messages');
     
-    final String? conversationId = messageMap['conversationId'];
-    final String text = messageMap['text'];
-    final bool isMe = messageMap['isMe'];
-    final DateTime timestamp = DateTime.parse(messageMap['timestamp']);
+    for (var item in messagesBox.values) {
+      final messageMap = Map<String, dynamic>.from(item as Map);
+      
+      final String? conversationId = messageMap['conversationId'];
+      final String text = messageMap['text'];
+      final bool isMe = messageMap['isMe'];
+      final DateTime timestamp = DateTime.parse(messageMap['timestamp']);
 
-    // Si on trouve une conversation correspondante en mémoire
-    if (conversationId != null && _conversations.containsKey(conversationId)) {
-      // Vérifier si le message n'est pas déjà présent pour éviter les doublons
-      bool exists = _conversations[conversationId]!.messages.any(
-        (m) => m.text == text && m.timestamp.isAtSameMomentAs(timestamp)
-      );
-
-      if (!exists) {
-        _conversations[conversationId]!.messages.add(
-          ChatMessage(text: text, isMe: isMe, timestamp: timestamp),
+      if (conversationId != null && _conversations.containsKey(conversationId)) {
+        bool exists = _conversations[conversationId]!.messages.any(
+          (m) => m.text == text && m.timestamp.isAtSameMomentAs(timestamp)
         );
+
+        if (!exists) {
+          _conversations[conversationId]!.messages.add(
+            ChatMessage(text: text, isMe: isMe, timestamp: timestamp),
+          );
+        }
       }
     }
   }
-}
 
-  // Sauvegarder les contacts dans le stockage sécurisé
-void _saveContactsToStorage() {
-  final contactsBox = Hive.box('contacts_box');
-  
-  // On convertit vos contacts sous forme de map pour les stocker proprement
-  final contactsMap = _conversations.map((key, conversation) {
-    return MapEntry(key, {
-      'contactId': conversation.contactId,
-      'contactName': conversation.contactName,
-      'publicKey': conversation.publicKey,
+  void _saveContactsToStorage() {
+    final contactsBox = Hive.box('contacts_box');
+    final contactsMap = _conversations.map((key, conversation) {
+      return MapEntry(key, {
+        'contactId': conversation.contactId,
+        'contactName': conversation.contactName,
+        'publicKey': conversation.publicKey,
+      });
     });
-  });
 
-  contactsBox.put('saved_contacts', contactsMap);
-}
+    contactsBox.put('saved_contacts', contactsMap);
+  }
 
   String get _myContactLink => 'securechat://$_myId/$_myPubKey';
 
-void _showAddContactDialog() {
-  final TextEditingController nameController = TextEditingController();
-  final TextEditingController linkController = TextEditingController();
+  void _showAddContactDialog() {
+    final TextEditingController nameController = TextEditingController();
+    final TextEditingController linkController = TextEditingController();
 
-  showDialog(
-    context: context,
-    builder: (context) {
-      return AlertDialog(
-        title: const Text('Nouvelle conversation'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Bouton pour lancer le scanner de QR Code (Mobile Scanner)
-            OutlinedButton.icon(
-              onPressed: () async {
-                // 1. On configure le contrôleur pour cibler uniquement les QR codes 
-                // et forcer la caméra arrière (évite certains crashs d'initialisation)
-                final MobileScannerController cameraController = MobileScannerController(
-                  facing: CameraFacing.back,
-                  formats: const [BarcodeFormat.qrCode],
-                );
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Nouvelle conversation'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final MobileScannerController cameraController = MobileScannerController(
+                    facing: CameraFacing.back,
+                    formats: const [BarcodeFormat.qrCode],
+                  );
 
-                final scannedLink = await Navigator.push<String>(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => Scaffold(
-                      appBar: AppBar(
-                        title: const Text('Scannez le QR code'),
-                        backgroundColor: Colors.deepPurple,
-                        foregroundColor: Colors.white,
-                      ),
-                      // L'écran de scan avec gestion d'erreur intégrée
-                      body: MobileScanner(
-                        controller: cameraController,
-                        // 2. ON INTERCEPTE L'ERREUR POUR REMPLACER LE POINT D'EXCLAMATION
-                        errorBuilder: (context, error, child) {
-                          return Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(20.0),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Icon(Icons.error, color: Colors.red, size: 50),
-                                  const SizedBox(height: 10),
-                                  Text(
-                                    'Erreur : ${error.errorCode}',
-                                    style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                  const SizedBox(height: 10),
-                                  Text(
-                                    error.errorDetails?.message ?? 'Pas de détails fournis par Android',
-                                    style: const TextStyle(color: Colors.grey, fontSize: 14),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ],
+                  final scannedLink = await Navigator.push<String>(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => Scaffold(
+                        appBar: AppBar(
+                          title: const Text('Scannez le QR code'),
+                          backgroundColor: Colors.deepPurple,
+                          foregroundColor: Colors.white,
+                        ),
+                        body: MobileScanner(
+                          controller: cameraController,
+                          errorBuilder: (context, error, child) {
+                            return Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(20.0),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(Icons.error, color: Colors.red, size: 50),
+                                    const SizedBox(height: 10),
+                                    Text(
+                                      'Erreur : ${error.errorCode}',
+                                      style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
-                          );
-                        },
-                        onDetect: (capture) {
-                          final barcodes = capture.barcodes;
-                          for (final barcode in barcodes) {
-                            if (barcode.rawValue != null) {
-                              cameraController.stop(); // On arrête la caméra proprement
-                              Navigator.pop(context, barcode.rawValue);
-                              break; // On sort de la boucle dès qu'on a un résultat
+                            );
+                          },
+                          onDetect: (capture) {
+                            final barcodes = capture.barcodes;
+                            for (final barcode in barcodes) {
+                              if (barcode.rawValue != null) {
+                                cameraController.stop();
+                                Navigator.pop(context, barcode.rawValue);
+                                break;
+                              }
                             }
-                          }
-                        },
+                          },
+                        ),
                       ),
-                    ),
-                  ),
-                );
-
-                // 3. Libération des ressources de la caméra à la fermeture de l'écran
-                cameraController.dispose();
-
-                // Injection du lien scanné dans le champ texte
-                if (scannedLink != null) {
-                  String cleanLink = scannedLink;
-                  
-                  // Nettoyage basique sécurisé pour extraire le lien securechat://
-                  if (cleanLink.contains('securechat://')) {
-                    final startIndex = cleanLink.indexOf('securechat://');
-                    // On coupe les éventuels caractères indésirables autour
-                    cleanLink = cleanLink.substring(startIndex).split(RegExp(r'["\s}]')).first;
-                  }
-
-                  linkController.text = cleanLink;
-                  
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('QR code scanné avec succès !'),
-                      backgroundColor: Colors.green,
                     ),
                   );
+
+                  cameraController.dispose();
+
+                  if (scannedLink != null) {
+                    String cleanLink = scannedLink;
+                    if (cleanLink.contains('securechat://')) {
+                      final startIndex = cleanLink.indexOf('securechat://');
+                      cleanLink = cleanLink.substring(startIndex).split(RegExp(r'["\s}]')).first;
+                    }
+                    linkController.text = cleanLink;
+                  }
+                },
+                icon: const Icon(Icons.qr_code_scanner),
+                label: const Text('Scanner le QR code du contact'),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: 'Nom ou Surnom'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: linkController,
+                decoration: const InputDecoration(labelText: 'Coller le lien'),
+                maxLines: 2,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Annuler'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final name = nameController.text.trim();
+                final link = linkController.text.trim();
+
+                if (name.isNotEmpty && link.startsWith('securechat://')) {
+                  try {
+                    final payload = link.replaceFirst('securechat://', '');
+                    if (payload.length > 16) {
+                      final id = payload.substring(0, 16);
+                      final pubKey = payload.substring(17);
+
+                      setState(() {
+                        _conversations[id] = Conversation(
+                          contactId: id,
+                          contactName: name,
+                          publicKey: pubKey,
+                        );
+                      });
+
+                      _saveContactsToStorage();
+                      Navigator.pop(context);
+                    }
+                  } catch (e) {
+                    print('Erreur parsing lien: $e');
+                  }
                 }
               },
-              icon: const Icon(Icons.qr_code_scanner),
-              label: const Text('Scanner le QR code du contact'),
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 45),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Divider(),
-            const SizedBox(height: 8),
-
-            // Saisie manuelle ou remplie par le scanner
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Nom ou Surnom (ex: Alice)'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: linkController,
-              decoration: const InputDecoration(labelText: 'Coller le lien (securechat://...)'),
-              maxLines: 2,
+              child: const Text('Ajouter'),
             ),
           ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Annuler'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final name = nameController.text.trim();
-              final link = linkController.text.trim();
-
-              if (name.isNotEmpty && link.startsWith('securechat://')) {
-                try {
-                  final payload = link.replaceFirst('securechat://', '');
-                  if (payload.length > 16) {
-                    final id = payload.substring(0, 16);
-                    final pubKey = payload.substring(17);
-
-                    setState(() {
-                      _conversations[id] = Conversation(
-                        contactId: id,
-                        contactName: name,
-                        publicKey: pubKey,
-                      );
-                    });
-
-                    // Sauvegarde permanente
-                    _saveContactsToStorage();
-
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Contact ajouté et sauvegardé !'), backgroundColor: Colors.green),
-                    );
-                  }
-                } catch (e) {
-                  print('Erreur parsing lien: $e');
-                }
-              }
-            },
-            child: const Text('Ajouter'),
-          ),
-        ],
-      );
-    },
-  );
-}
+        );
+      },
+    );
+  }
 
   @override
   void dispose() {
@@ -490,7 +504,7 @@ void _showAddContactDialog() {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Messagerie Chiffrée Anonyme'),
+        title: const Text('Messagerie Hush'),
         actions: [
           IconButton(
             icon: const Icon(Icons.info_outline),
@@ -534,7 +548,7 @@ void _showAddContactDialog() {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => MyQrCodeScreen(userId: _myContactLink), // Assurez-vous que c'est bien le nom de votre variable d'ID
+                  builder: (context) => MyQrCodeScreen(userId: _myContactLink),
                 ),
               );
             },
@@ -550,7 +564,7 @@ void _showAddContactDialog() {
                     children: [
                       const Icon(Icons.chat_bubble_outline, size: 64, color: Colors.grey),
                       const SizedBox(height: 16),
-                      const Text('Aucune conversation active.', style: TextStyle(color: Colors.grey, fontSize: 16)),
+                      const Text('Aucune conversation active.'),
                       const SizedBox(height: 12),
                       ElevatedButton.icon(
                         onPressed: _showAddContactDialog,
@@ -579,44 +593,55 @@ void _showAddContactDialog() {
                       title: Text(conversation.contactName, style: const TextStyle(fontWeight: FontWeight.bold)),
                       subtitle: Text(lastMessage, maxLines: 1, overflow: TextOverflow.ellipsis),
                       onTap: () {
+                        // 1. Demander le statut au serveur
+                        _wsService.send(jsonEncode({
+                          'type': 'check_status',
+                          'targetId': conversation.contactId,
+                        }));
+
+                        // 2. Ouvrir le ChatScreen en passant le Notifier
                         Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (context) => ChatScreen(
                               conversation: conversation,
-                              cryptoService: _cryptoService,
                               wsService: _wsService,
+                              cryptoService: _cryptoService,
                               myPubKey: _myPubKey,
+                              statusNotifier: getStatusNotifier(conversation.contactId),
                             ),
                           ),
-                        ).then((_) => setState(() {}));
+                        );
                       },
                     );
                   },
                 ),
-      floatingActionButton: _conversations.isNotEmpty
-          ? FloatingActionButton(
-              onPressed: _showAddContactDialog,
-              child: const Icon(Icons.person_add),
-            )
-          : null,
+      floatingActionButton: FloatingActionButton(
+        onPressed: _showAddContactDialog,
+        backgroundColor: Colors.deepPurple,
+        foregroundColor: Colors.white,
+        child: const Icon(Icons.person_add),
+        tooltip: 'Ajouter un contact',
+      ),
     );
   }
 }
 
 class ChatScreen extends StatefulWidget {
   final Conversation conversation;
-  final CryptoService cryptoService;
   final WebSocketService wsService;
+  final CryptoService cryptoService;
   final String myPubKey;
+  final ValueNotifier<bool> statusNotifier;
 
   const ChatScreen({
-    super.key,
+    Key? key,
     required this.conversation,
-    required this.cryptoService,
     required this.wsService,
+    required this.cryptoService,
     required this.myPubKey,
-  });
+    required this.statusNotifier,
+  }) : super(key: key);
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -625,59 +650,42 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-
   final _messagesBox = Hive.box('chat_messages');
 
   @override
   void initState() {
     super.initState();
-    final previousListener = widget.wsService.onMessageReceived;
-    widget.wsService.onMessageReceived = (data) async {
-      if (previousListener != null) {
-        await previousListener(data);
-      }
-      if (data['type'] == 'message' && data['senderId'] == widget.conversation.contactId) {
-        if (mounted) {
-          setState(() {});
-          _scrollToBottom();
-        }
-      }
-    };
+    // Demander le statut au serveur dès l'ouverture
+    widget.wsService.send(jsonEncode({
+      'type': 'check_status',
+      'targetId': widget.conversation.contactId,
+    }));
   }
 
-void _sendMessage() async {
+  void _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
     try {
       final encryptedPayload = await widget.cryptoService.encryptMessage(text, widget.conversation.publicKey);
-
       widget.wsService.sendMessage(widget.conversation.contactId, encryptedPayload, widget.myPubKey);
 
-      // 1. Sauvegarde locale chiffrée (Hive)
-      final messageData = {
+      _messagesBox.add({
         'text': text,
         'isMe': true,
         'conversationId': widget.conversation.contactId,
         'timestamp': DateTime.now().toIso8601String(),
-        // Vous pouvez aussi stocker l'ID de la conversation si vous en avez plusieurs :
-        // 'conversationId': widget.conversation.contactId, 
-      };
-      _messagesBox.add(messageData);
-
-      // 2. Mise à jour de l'interface existante
-      setState(() {
-        widget.conversation.messages.add(
-          ChatMessage(text: text, isMe: true, timestamp: DateTime.now()),
-        );
       });
+
+      // Ajout en mémoire locale pour la cohérence instantanée de la conversation active
+      widget.conversation.messages.add(
+        ChatMessage(text: text, isMe: true, timestamp: DateTime.now()),
+      );
 
       _messageController.clear();
       _scrollToBottom();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erreur de chiffrement : $e'), backgroundColor: Colors.red),
-      );
+      print('Erreur de chiffrement : $e');
     }
   }
 
@@ -701,55 +709,108 @@ void _sendMessage() async {
 
     return Scaffold(
       appBar: AppBar(
-        title: Row(
-          children: [
-            CircleAvatar(
-              radius: 16,
-              backgroundColor: Colors.blue.shade200,
-              child: Text(initialLetter, style: const TextStyle(fontSize: 14)),
-            ),
-            const SizedBox(width: 10),
-            Text(widget.conversation.contactName),
-          ],
+        title: ValueListenableBuilder<bool>(
+          valueListenable: widget.statusNotifier,
+          builder: (context, isOnline, child) {
+            return Row(
+              children: [
+                Stack(
+                  children: [
+                    CircleAvatar(
+                      radius: 16,
+                      backgroundColor: Colors.blue.shade200,
+                      child: Text(initialLetter, style: const TextStyle(fontSize: 14)),
+                    ),
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: isOnline ? Colors.green : Colors.grey,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 1.5),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 10),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(widget.conversation.contactName, style: const TextStyle(fontSize: 16)),
+                    Text(
+                      isOnline ? 'En ligne' : 'Hors ligne',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isOnline ? Colors.green.shade400 : Colors.grey,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
         ),
       ),
       body: Column(
         children: [
           Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.all(16),
-              itemCount: widget.conversation.messages.length,
-              itemBuilder: (context, index) {
-                final message = widget.conversation.messages[index];
-                return Align(
-                  alignment: message.isMe ? Alignment.centerRight : Alignment.centerLeft,
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(vertical: 4),
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                    constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-                    decoration: BoxDecoration(
-                      color: message.isMe ? Colors.blue.shade600 : Colors.grey.shade200,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Text(
-                      message.text,
-                      style: TextStyle(
-                        color: message.isMe ? Colors.white : Colors.black87,
-                        fontSize: 15,
+            child: ValueListenableBuilder(
+              valueListenable: Hive.box('chat_messages').listenable(),
+              builder: (context, Box box, _) {
+                // Filtrer et mapper les messages spécifiques à cette conversation depuis Hive en temps réel
+                final messages = box.values
+                    .map((e) => Map<String, dynamic>.from(e as Map))
+                    .where((m) => m['conversationId'] == widget.conversation.contactId)
+                    .toList();
+
+                messages.sort((a, b) => DateTime.parse(a['timestamp']).compareTo(DateTime.parse(b['timestamp'])));
+
+                if (messages.isEmpty) {
+                  return const Center(child: Text('Aucun message pour l\'instant'));
+                }
+
+                return ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.all(16),
+                  itemCount: messages.length,
+                  itemBuilder: (context, index) {
+                    final message = messages[index];
+                    final bool isMe = message['isMe'] ?? false;
+                    final String text = message['text'] ?? '';
+
+                    return Align(
+                      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(vertical: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+                        decoration: BoxDecoration(
+                          color: isMe ? Colors.blue.shade600 : Colors.grey.shade200,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Text(
+                          text,
+                          style: TextStyle(
+                            color: isMe ? Colors.white : Colors.black87,
+                            fontSize: 15,
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 );
               },
             ),
           ),
           Padding(
-            // C'est ce padding qui va surélever toute la barre du bas
             padding: const EdgeInsets.only(left: 8.0, right: 8.0, bottom: 20.0, top: 8.0),
             child: Container(
               padding: const EdgeInsets.all(8.0),
-              // S'adapte au mode sombre ou clair de manière fluide
               decoration: BoxDecoration(
                 color: Theme.of(context).brightness == Brightness.dark 
                     ? const Color(0xFF1E1E1E) 
@@ -769,7 +830,6 @@ void _sendMessage() async {
                         ),
                         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                         filled: true,
-                        // Fond du champ texte adapté au mode sombre
                         fillColor: Theme.of(context).brightness == Brightness.dark 
                             ? const Color(0xFF2C2C2C) 
                             : Colors.white,
@@ -779,7 +839,7 @@ void _sendMessage() async {
                   ),
                   const SizedBox(width: 8),
                   CircleAvatar(
-                    backgroundColor: Colors.deepPurple, // Garde votre couleur de thème
+                    backgroundColor: Colors.deepPurple,
                     child: IconButton(
                       icon: const Icon(Icons.send, color: Colors.white, size: 18),
                       onPressed: _sendMessage,
@@ -793,4 +853,40 @@ void _sendMessage() async {
       ),
     );
   }
+}
+
+@pragma('vm:entry-point')
+void onStartBackgroundService(ServiceInstance service) {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  if (service is AndroidServiceInstance) {
+    service.on('setAsForeground').listen((event) {
+      service.setAsForegroundService();
+    });
+
+    service.on('setAsBackground').listen((event) {
+      service.setAsBackgroundService();
+    });
+  }
+
+  service.on('stopService').listen((event) {
+    service.stopSelf();
+  });
+
+  final WebSocketService bgWsService = WebSocketService();
+  final CryptoService bgCryptoService = CryptoService();
+
+  bgWsService.onMessageReceived = (data) async {
+    if (data['type'] == 'message') {
+      final encryptedPayload = data['encryptedPayload'];
+      final senderPubKey = data['senderPublicKey'];
+
+      try {
+        await bgCryptoService.decryptMessage(encryptedPayload, senderPubKey);
+        await _showNotification('Hush (Arrière-plan)', '🔒 Nouveau message chiffré reçu');
+      } catch (e) {
+        print('Erreur de déchiffrement en arrière-plan : $e');
+      }
+    }
+  };
 }

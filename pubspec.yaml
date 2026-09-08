@@ -41,6 +41,7 @@ dependencies:
   hive: ^2.2.3
   hive_flutter: ^1.1.0
   flutter_local_notifications: ^17.2.0
+  flutter_background_service: ^5.0.5
 
 dev_dependencies:
   flutter_launcher_icons: "^0.13.1"

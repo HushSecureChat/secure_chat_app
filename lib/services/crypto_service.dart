@@ -11,21 +11,44 @@ class CryptoService {
   SimpleKeyPair? _keyPair;
   String? _userId;
 
-  Future<void> initUserIdentity() async {
+Future<void> initUserIdentity() async {
+  // 1. Utilisez exactement les mêmes options Android sécurisées partout
+  const _storage = FlutterSecureStorage(
+    aOptions: AndroidOptions(
+      encryptedSharedPreferences: true,
+    ),
+  );
+
+  try {
+    // 2. Tentative de lecture de la clé privée existante
     String? storedPrivateKeyHex = await _storage.read(key: 'private_key');
 
     if (storedPrivateKeyHex == null) {
+      // Première installation : Génération d'une nouvelle identité unique
       _keyPair = await _algorithm.newKeyPair();
       final privateKeyBytes = await _keyPair!.extractPrivateKeyBytes();
-      await _storage.write(key: 'private_key', value: base64Encode(privateKeyBytes));
+      
+      await _storage.write(
+        key: 'private_key', 
+        value: base64Encode(privateKeyBytes),
+      );
     } else {
+      // Redémarrage : Restauration de la clé existante
       final privateKeyBytes = base64Decode(storedPrivateKeyHex);
       _keyPair = await _algorithm.newKeyPairFromSeed(privateKeyBytes);
     }
-
-    final publicKey = await _keyPair!.extractPublicKey();
-    _userId = base64UrlEncode(publicKey.bytes).substring(0, 16);
+  } catch (e) {
+    // Si le stockage sécurisé échoue (corruption du Keystore Android en Release)
+    print("Erreur secure_storage, réinitialisation de l'identité : $e");
+    // On régénère proprement si le stockage a sauté
+    _keyPair = await _algorithm.newKeyPair();
+    final privateKeyBytes = await _keyPair!.extractPrivateKeyBytes();
+    await _storage.write(key: 'private_key', value: base64Encode(privateKeyBytes));
   }
+
+  final publicKey = await _keyPair!.extractPublicKey();
+  _userId = base64UrlEncode(publicKey.bytes).substring(0, 16);
+}
 
   String get userId => _userId ?? 'Inconnu';
 
