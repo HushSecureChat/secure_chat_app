@@ -1,5 +1,5 @@
-name: secure_chat_app
-description: "A new Flutter project."
+name: hush
+description: "Une application de chat sécurisée et anonyme."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -38,8 +38,12 @@ dependencies:
   web_socket_channel: ^3.0.1
   mobile_scanner: ^5.2.3
   qr_flutter: ^4.1.0
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  flutter_local_notifications: ^17.2.0
 
 dev_dependencies:
+  flutter_launcher_icons: "^0.13.1"
   flutter_test:
     sdk: flutter
 
@@ -91,3 +95,7 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+flutter_launcher_icons:
+  image_path: "assets/icon/hush.png"
+  android: true
+  ios: true

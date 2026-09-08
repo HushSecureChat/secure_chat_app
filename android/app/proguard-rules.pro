@@ -7,3 +7,11 @@
     @android.webkit.JavascriptInterface <methods>;
 }
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
+
+# Garder flutter_secure_storage intact en Release
+-keep class com.it_nomads.fluttersecurestorage.** { *; }
+
+# Garder Hive intact en Release
+-keep class hive.** { *; }
+-dontwarn hive.**
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod

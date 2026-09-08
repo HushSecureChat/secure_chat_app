@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Dégradé de fond sombre et mat -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1A1A1A"/>
+      <stop offset="100%" stop-color="#0A0A0A"/>
+    </linearGradient>
+    
+    <!-- Dégradé lumineux pour la sécurité (Violet vers Cyan) -->
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7C4DFF"/>
+      <stop offset="100%" stop-color="#00E5FF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Fond de l'icône avec coins arrondis style Android/iOS moderne -->
+  <rect width="512" height="512" rx="116" fill="url(#bgGrad)"/>
+
+  <!-- Forme stylisée représentant un 'H' moderne combiné à une bulle de dialogue / bouclier -->
+  <path d="M150 130h52v100h108V130h52v252h-52V274H202v108h-52V130z" fill="url(#accentGrad)"/>
+  
+  <!-- Point de chiffrement / sécurité subtil en bas -->
+  <circle cx="256" cy="410" r="14" fill="#00E5FF"/>
+</svg>

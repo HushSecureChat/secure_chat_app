@@ -6,22 +6,126 @@ import 'services/crypto_service.dart';
 import 'services/websocket_service.dart';
 import 'my_qr_code_screen.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-void main() {
+
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
+Future<void> _initNotifications() async {
+  const AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('@mipmap/ic_launcher'); // Utilise ton icône d'application
+
+  const InitializationSettings initializationSettings =
+      InitializationSettings(android: initializationSettingsAndroid);
+
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+}
+
+// Fonction pour afficher la notification locale
+Future<void> _showNotification(String senderName, String messageBody) async {
+  const AndroidNotificationDetails androidPlatformChannelSpecifics =
+      AndroidNotificationDetails(
+    'hush_chat_channel', // ID du canal
+    'Hush Messages',     // Nom du canal visible par l'utilisateur
+    channelDescription: 'Notifications pour les messages chiffrés entrants',
+    importance: Importance.max,
+    priority: Priority.high,
+    // Tu peux customiser la couleur de la LED/accent si tu veux du style cyberpunk
+    color: Color(0xFF7C4DFF), 
+  );
+
+  const NotificationDetails platformChannelSpecifics =
+      NotificationDetails(android: androidPlatformChannelSpecifics);
+
+  await flutterLocalNotificationsPlugin.show(
+    0, // ID de la notification
+    'Nouveau message de $senderName', // Titre
+    messageBody, // Corps du message (ou un texte générique si tu préfères garder le contenu masqué pour plus de vie privée : ex: "Nouveau message chiffré")
+    platformChannelSpecifics,
+  );
+}
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // 1. Initialiser Hive pour Flutter
+  await Hive.initFlutter();
+
+  // 2. Créer ou récupérer une clé de chiffrement sécurisée
+  const secureStorage = FlutterSecureStorage(
+    aOptions: AndroidOptions(
+      encryptedSharedPreferences: true,
+    ),
+  );
+  String? encryptionKeyString = await secureStorage.read(key: 'hush_db_key');
+  
+  Uint8List encryptionKey;
+  if (encryptionKeyString == null) {
+    // Génère une clé aléatoire forte si elle n'existe pas encore
+    final generatedKey = Hive.generateSecureKey();
+    await secureStorage.write(
+      key: 'hush_db_key', 
+      value: base64UrlEncode(generatedKey),
+    );
+    encryptionKey = Uint8List.fromList(generatedKey);
+  } else {
+    encryptionKey = base64Url.decode(encryptionKeyString);
+  }
+
+  // 3. Ouvrir la boîte Hive des messages de manière chiffrée (AES-256)
+  await Hive.openBox(
+    'chat_messages',
+    encryptionCipher: HiveAesCipher(encryptionKey),
+  );
+
+  // 4. Ouvrir la boîte Hive des contacts de manière chiffrée (AES-256) <--- AJOUTÉ ICI
+  await Hive.openBox(
+    'contacts_box',
+    encryptionCipher: HiveAesCipher(encryptionKey),
+  );
+
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
+
+  
   const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Messagerie Chiffrée Anonyme',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        useMaterial3: true,
+      // 1. Le thème clair (au cas où le téléphone est en mode clair)
+    theme: ThemeData(
+      brightness: Brightness.light,
+      primarySwatch: Colors.deepPurple,
+      scaffoldBackgroundColor: Colors.grey[100],
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Colors.deepPurple,
+        foregroundColor: Colors.white,
       ),
+    ),
+    
+    // 2. Le thème sombre (élégant, avec des nuances de gris sombre/noir)
+    darkTheme: ThemeData(
+      brightness: Brightness.dark,
+      primarySwatch: Colors.deepPurple,
+      scaffoldBackgroundColor: const Color(0xFF121212), // Noir mat très propre
+      cardColor: const Color(0xFF1E1E1E),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Color(0xFF1E1E1E),
+        foregroundColor: Colors.white,
+      ),
+      dialogTheme: const DialogThemeData(
+        backgroundColor: Color(0xFF1E1E1E),
+      ),
+    ),
+    
+    // 3. Suit automatiquement le réglage du téléphone (clair ou sombre)
+    themeMode: ThemeMode.system,
       home: const HomeScreen(),
     );
   }
@@ -60,6 +164,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final CryptoService _cryptoService = CryptoService();
   final WebSocketService _wsService = WebSocketService();
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
+
+  final _messagesBox = Hive.box('chat_messages');
   
   bool _isLoading = true;
   String _myId = '';
@@ -67,19 +173,22 @@ class _HomeScreenState extends State<HomeScreen> {
 
   final Map<String, Conversation> _conversations = {};
 
-  @override
+@override
   void initState() {
     super.initState();
     _initializeApp();
   }
 
   Future<void> _initializeApp() async {
+    await _initNotifications();
     await _cryptoService.initUserIdentity();
     _myId = _cryptoService.userId;
     _myPubKey = await _cryptoService.getPublicKeyString();
 
     // Charger les contacts sauvegardés localement
     await _loadSavedContacts();
+
+    await _loadSavedMessages();
 
     setState(() {
       _isLoading = false;
@@ -97,6 +206,17 @@ class _HomeScreenState extends State<HomeScreen> {
         try {
           final decryptedText = await _cryptoService.decryptMessage(encryptedPayload, senderPubKey);
           
+          // 1. Sauvegarde locale chiffrée (Hive) pour le message reçu
+          final messagesBox = Hive.box('chat_messages');
+          messagesBox.add({
+            'text': decryptedText,
+            'isMe': false,
+            'conversationId': senderId, // Utile pour retrouver à quelle conversation il appartient
+            'timestamp': DateTime.now().toIso8601String(),
+          });
+
+          await _showNotification('Hush', '🔒 Nouveau message chiffré reçu');
+
           setState(() {
             if (!_conversations.containsKey(senderId)) {
               // Si le contact n'existe pas, on le crée et on le sauvegarde automatiquement
@@ -124,39 +244,71 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // Charger les contacts depuis le stockage sécurisé
-  Future<void> _loadSavedContacts() async {
-    try {
-      final String? contactsJson = await _storage.read(key: 'saved_contacts');
-      if (contactsJson != null) {
-        final Map<String, dynamic> decodedMap = jsonDecode(contactsJson);
-        decodedMap.forEach((id, data) {
-          _conversations[id] = Conversation(
-            contactId: id,
-            contactName: data['name'],
-            publicKey: data['publicKey'],
-          );
-        });
+Future<void> _loadSavedContacts() async {
+  final contactsBox = Hive.box('contacts_box');
+  final savedData = contactsBox.get('saved_contacts');
+
+  if (savedData != null) {
+    final Map<String, dynamic> loadedMap = Map<String, dynamic>.from(savedData);
+    
+    setState(() {
+      _conversations.clear();
+      loadedMap.forEach((key, value) {
+        final contactData = Map<String, dynamic>.from(value);
+        _conversations[key] = Conversation(
+          contactId: contactData['contactId'],
+          contactName: contactData['contactName'],
+          publicKey: contactData['publicKey'],
+          messages: [], // Les messages seront chargés par _loadSavedMessages juste après
+        );
+      });
+    });
+  }
+}
+
+Future<void> _loadSavedMessages() async {
+  final messagesBox = Hive.box('chat_messages');
+  
+  // Parcourir tous les messages enregistrés dans la base locale
+  for (var item in messagesBox.values) {
+    final messageMap = Map<String, dynamic>.from(item as Map);
+    
+    final String? conversationId = messageMap['conversationId'];
+    final String text = messageMap['text'];
+    final bool isMe = messageMap['isMe'];
+    final DateTime timestamp = DateTime.parse(messageMap['timestamp']);
+
+    // Si on trouve une conversation correspondante en mémoire
+    if (conversationId != null && _conversations.containsKey(conversationId)) {
+      // Vérifier si le message n'est pas déjà présent pour éviter les doublons
+      bool exists = _conversations[conversationId]!.messages.any(
+        (m) => m.text == text && m.timestamp.isAtSameMomentAs(timestamp)
+      );
+
+      if (!exists) {
+        _conversations[conversationId]!.messages.add(
+          ChatMessage(text: text, isMe: isMe, timestamp: timestamp),
+        );
       }
-    } catch (e) {
-      print('Erreur lors du chargement des contacts : $e');
     }
   }
+}
 
   // Sauvegarder les contacts dans le stockage sécurisé
-  Future<void> _saveContactsToStorage() async {
-    try {
-      final Map<String, dynamic> contactsMap = {};
-      _conversations.forEach((id, conv) {
-        contactsMap[id] = {
-          'name': conv.contactName,
-          'publicKey': conv.publicKey,
-        };
-      });
-      await _storage.write(key: 'saved_contacts', value: jsonEncode(contactsMap));
-    } catch (e) {
-      print('Erreur lors de la sauvegarde des contacts : $e');
-    }
-  }
+void _saveContactsToStorage() {
+  final contactsBox = Hive.box('contacts_box');
+  
+  // On convertit vos contacts sous forme de map pour les stocker proprement
+  final contactsMap = _conversations.map((key, conversation) {
+    return MapEntry(key, {
+      'contactId': conversation.contactId,
+      'contactName': conversation.contactName,
+      'publicKey': conversation.publicKey,
+    });
+  });
+
+  contactsBox.put('saved_contacts', contactsMap);
+}
 
   String get _myContactLink => 'securechat://$_myId/$_myPubKey';
 
@@ -474,6 +626,8 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
+  final _messagesBox = Hive.box('chat_messages');
+
   @override
   void initState() {
     super.initState();
@@ -491,7 +645,7 @@ class _ChatScreenState extends State<ChatScreen> {
     };
   }
 
-  void _sendMessage() async {
+void _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
@@ -500,6 +654,18 @@ class _ChatScreenState extends State<ChatScreen> {
 
       widget.wsService.sendMessage(widget.conversation.contactId, encryptedPayload, widget.myPubKey);
 
+      // 1. Sauvegarde locale chiffrée (Hive)
+      final messageData = {
+        'text': text,
+        'isMe': true,
+        'conversationId': widget.conversation.contactId,
+        'timestamp': DateTime.now().toIso8601String(),
+        // Vous pouvez aussi stocker l'ID de la conversation si vous en avez plusieurs :
+        // 'conversationId': widget.conversation.contactId, 
+      };
+      _messagesBox.add(messageData);
+
+      // 2. Mise à jour de l'interface existante
       setState(() {
         widget.conversation.messages.add(
           ChatMessage(text: text, isMe: true, timestamp: DateTime.now()),
@@ -578,33 +744,49 @@ class _ChatScreenState extends State<ChatScreen> {
               },
             ),
           ),
-          Container(
-            padding: const EdgeInsets.all(8.0),
-            color: Colors.grey.shade50,
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _messageController,
-                    decoration: const InputDecoration(
-                      hintText: 'Écrire un message...',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(24))),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      filled: true,
-                      fillColor: Colors.white,
+          Padding(
+            // C'est ce padding qui va surélever toute la barre du bas
+            padding: const EdgeInsets.only(left: 8.0, right: 8.0, bottom: 20.0, top: 8.0),
+            child: Container(
+              padding: const EdgeInsets.all(8.0),
+              // S'adapte au mode sombre ou clair de manière fluide
+              decoration: BoxDecoration(
+                color: Theme.of(context).brightness == Brightness.dark 
+                    ? const Color(0xFF1E1E1E) 
+                    : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(30),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _messageController,
+                      decoration: InputDecoration(
+                        hintText: 'Écrire un message...',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        filled: true,
+                        // Fond du champ texte adapté au mode sombre
+                        fillColor: Theme.of(context).brightness == Brightness.dark 
+                            ? const Color(0xFF2C2C2C) 
+                            : Colors.white,
+                      ),
+                      onSubmitted: (_) => _sendMessage(),
                     ),
-                    onSubmitted: (_) => _sendMessage(),
                   ),
-                ),
-                const SizedBox(width: 8),
-                CircleAvatar(
-                  backgroundColor: Colors.blue,
-                  child: IconButton(
-                    icon: const Icon(Icons.send, color: Colors.white, size: 18),
-                    onPressed: _sendMessage,
+                  const SizedBox(width: 8),
+                  CircleAvatar(
+                    backgroundColor: Colors.deepPurple, // Garde votre couleur de thème
+                    child: IconButton(
+                      icon: const Icon(Icons.send, color: Colors.white, size: 18),
+                      onPressed: _sendMessage,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],
