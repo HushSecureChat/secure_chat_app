@@ -11,6 +11,10 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter/foundation.dart'; // Pour kIsWeb
 import 'dart:io' show Platform;
+import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
+
+
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
@@ -198,6 +202,44 @@ class _HomeScreenState extends State<HomeScreen> {
   final WebSocketService _wsService = WebSocketService();
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
+  final String currentAppVersion = "10.09.26";
+  final String versionUrl = 'https://ws-secure-chat.onrender.com/version.json';
+
+Future<void> _checkForUpdates() async {
+  debugPrint("🔍 Tentative de vérification des mises à jour..."); // 👈 Ajoute ça
+  try {
+    final response = await http.get(Uri.parse(versionUrl));
+    debugPrint("📥 Réponse reçue du serveur : ${response.statusCode}"); // 👈 Ajoute ça
+    
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      debugPrint("📦 Données JSON reçues : $data"); // 👈 Ajoute ça
+      
+      final String latestVersion = data['latestVersion'];
+      final String releaseNotes = data['releaseNotes'];
+
+      if (latestVersion != currentAppVersion) {
+        setState(() {
+          _conversations['system_update'] = Conversation(
+            contactId: 'system_update',
+            contactName: 'Mise à jour Hush (v$latestVersion)',
+            publicKey: 'SYSTEM_UPDATE',
+            messages: [
+              ChatMessage(
+                text: "🚀 Une nouvelle version ($latestVersion) est disponible !\n\nNouveautés :\n$releaseNotes\n\nCliquez ici pour télécharger la mise à jour.",
+                isMe: false,
+                timestamp: DateTime.now(),
+              )
+            ],
+          );
+        });
+      }
+    }
+  } catch (e) {
+    debugPrint("❌ Erreur critique lors de la vérification des mises à jour : $e"); // 👈 Ajoute ça
+  }
+}
+
   final _messagesBox = Hive.box('chat_messages');
   
   bool _isLoading = true;
@@ -219,6 +261,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _checkForUpdates();
     _initializeApp();
   }
 
@@ -592,27 +635,35 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       title: Text(conversation.contactName, style: const TextStyle(fontWeight: FontWeight.bold)),
                       subtitle: Text(lastMessage, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      onTap: () {
-                        // 1. Demander le statut au serveur
-                        _wsService.send(jsonEncode({
-                          'type': 'check_status',
-                          'targetId': conversation.contactId,
-                        }));
+                      onTap: () async {
+                      if (conversation.contactId == 'system_update') {
+                        // URL directe de l'APK récupérée ou codée en dur
+                        final Uri url = Uri.parse('https://github.com/d4nm0/Hush_web/releases/download/Beta.08092026/Hush.Beta.08092026.apk');
+                        if (await canLaunchUrl(url)) {
+                          await launchUrl(url, mode: LaunchMode.externalApplication);
+                        }
+                        return;
+                      }
 
-                        // 2. Ouvrir le ChatScreen en passant le Notifier
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => ChatScreen(
-                              conversation: conversation,
-                              wsService: _wsService,
-                              cryptoService: _cryptoService,
-                              myPubKey: _myPubKey,
-                              statusNotifier: getStatusNotifier(conversation.contactId),
-                            ),
+                      // Comportement normal pour un vrai contact...
+                      _wsService.send(jsonEncode({
+                        'type': 'check_status',
+                        'targetId': conversation.contactId,
+                      }));
+
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => ChatScreen(
+                            conversation: conversation,
+                            wsService: _wsService,
+                            cryptoService: _cryptoService,
+                            myPubKey: _myPubKey,
+                            statusNotifier: getStatusNotifier(conversation.contactId),
                           ),
-                        );
-                      },
+                        ),
+                      );
+                    },
                     );
                   },
                 ),
