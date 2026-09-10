@@ -7,12 +7,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
-    # Indique à GitHub d'exécuter toutes les commandes dans le dossier android/
-    defaults:
-      run:
-        working-directory: android
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -24,10 +18,12 @@ jobs:
           java-version: '17'
 
       - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+        run: chmod +x android/gradlew
 
       - name: Build Release APK
-        run: ./gradlew assembleRelease
+        run: |
+          cd android
+          ./gradlew assembleRelease
 
       - name: Rename APK with Date and Iteration
         run: |
@@ -35,8 +31,8 @@ jobs:
           ITERATION=${{ github.run_number }}
           NEW_NAME="Hush-$DATE-$ITERATION.apk"
           
-          mkdir -p output_apk
-          cp app/build/outputs/apk/release/app-release-unsigned.apk "output_apk/$NEW_NAME" || cp app/build/outputs/apk/release/app-release.apk "output_apk/$NEW_NAME"
+          mkdir -p android/output_apk
+          cp android/app/build/outputs/apk/release/app-release-unsigned.apk "android/output_apk/$NEW_NAME" || cp android/app/build/outputs/apk/release/app-release.apk "android/output_apk/$NEW_NAME"
           
           echo "APK renommé en : $NEW_NAME"
 
