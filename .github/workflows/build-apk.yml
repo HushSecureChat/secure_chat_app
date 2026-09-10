@@ -1,0 +1,43 @@
+name: Build Android Release APK
+
+on:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x android/gradlew
+
+      - name: Build Release APK
+        run: |
+          cd android
+          ./gradlew assembleRelease
+
+      - name: Rename APK with Date and Iteration
+        run: |
+          DATE=$(date +'%d-%m-%Y')
+          ITERATION=${{ github.run_number }}
+          NEW_NAME="Hush-$DATE-$ITERATION.apk"
+          
+          mkdir -p android/output_apk
+          cp android/app/build/outputs/apk/release/app-release-unsigned.apk "android/output_apk/$NEW_NAME" || cp android/app/build/outputs/apk/release/app-release.apk "android/output_apk/$NEW_NAME"
+          
+          echo "APK renommé en : $NEW_NAME"
+
+      - name: Upload Renamed APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hush-APK-Release
+          path: android/output_apk/*.apk
