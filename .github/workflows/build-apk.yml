@@ -7,6 +7,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    
+    # Indique à GitHub d'exécuter toutes les commandes dans le dossier android/
+    defaults:
+      run:
+        working-directory: android
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -25,15 +31,10 @@ jobs:
 
       - name: Rename APK with Date and Iteration
         run: |
-          # Récupère la date au format JJ-MM-AAAA
           DATE=$(date +'%d-%m-%Y')
-          # Récupère le numéro de l'itération (run_number de GitHub Actions)
           ITERATION=${{ github.run_number }}
-          
-          # Définit le nouveau nom de fichier
           NEW_NAME="Hush-$DATE-$ITERATION.apk"
           
-          # Déplace et renomme l'APK dans un dossier temporaire pour l'upload
           mkdir -p output_apk
           cp app/build/outputs/apk/release/app-release-unsigned.apk "output_apk/$NEW_NAME" || cp app/build/outputs/apk/release/app-release.apk "output_apk/$NEW_NAME"
           
@@ -43,4 +44,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Hush-APK-Release
-          path: output_apk/*.apk
+          path: android/output_apk/*.apk
