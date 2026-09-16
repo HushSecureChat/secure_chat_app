@@ -27,7 +27,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final WebSocketService _wsService = WebSocketService();
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
-  final String currentAppVersion = "10.09.26";
+  final String currentAppVersion = "16.09.26";
   final String versionUrl = 'https://ws-secure-chat.onrender.com/version.json';
 
 Future<void> _checkForUpdates() async {
