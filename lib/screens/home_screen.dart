@@ -119,16 +119,29 @@ Future<void> _checkForUpdates() async {
 
         try {
           final decryptedText = await _cryptoService.decryptMessage(encryptedPayload, senderPubKey);
-          
           final messagesBox = Hive.box('chat_messages');
+          
+          String displayOrStorageText = decryptedText;
+          String? imageBase64;
+
+          // 👇 Vérification si c'est une image chiffrée
+          if (decryptedText.startsWith('IMG:')) {
+            imageBase64 = decryptedText.replaceFirst('IMG:', '');
+            displayOrStorageText = 'Image';
+          }
+
           messagesBox.add({
-            'text': decryptedText,
+            'text': displayOrStorageText,
             'isMe': false,
             'conversationId': senderId,
             'timestamp': DateTime.now().toIso8601String(),
+            if (imageBase64 != null) 'imageBase64': imageBase64,
           });
 
-          await _showNotification('Hush', '🔒 Nouveau message chiffré reçu');
+          await _showNotification(
+            'Hush', 
+            imageBase64 != null ? '📷 Nouvelle photo reçue' : '🔒 Nouveau message chiffré reçu',
+          );
 
           setState(() {
             if (!_conversations.containsKey(senderId)) {
@@ -141,7 +154,12 @@ Future<void> _checkForUpdates() async {
             }
 
             _conversations[senderId]!.messages.add(
-              ChatMessage(text: decryptedText, isMe: false, timestamp: DateTime.now()),
+              ChatMessage(
+                text: displayOrStorageText,
+                isMe: false,
+                timestamp: DateTime.now(),
+                imageBase64: imageBase64,
+              ),
             );
           });
         } catch (e) {
@@ -208,7 +226,12 @@ Future<void> _checkForUpdates() async {
 
         if (!exists) {
           _conversations[conversationId]!.messages.add(
-            ChatMessage(text: text, isMe: isMe, timestamp: timestamp),
+            ChatMessage(
+              text: text, 
+              isMe: isMe, 
+              timestamp: timestamp,
+              imageBase64: messageMap['imageBase64'], // 👈 Récupère l'image si elle existe
+            ),
           );
         }
       }

@@ -2,8 +2,9 @@ class ChatMessage {
   final String text;
   final bool isMe;
   final DateTime timestamp;
+  final String? imageBase64;
 
-  ChatMessage({required this.text, required this.isMe, required this.timestamp});
+  ChatMessage({required this.text, required this.isMe, required this.timestamp, this.imageBase64});
 }
 
 class Conversation {

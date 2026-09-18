@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../services/crypto_service.dart';
 import '../services/websocket_service.dart';
@@ -45,12 +46,13 @@ class _ChatScreenState extends State<ChatScreen> {
   });
   }
 
-  void _checkContactStatus() {
-    widget.wsService.send(jsonEncode({
-      'type': 'check_status',
-      'targetId': widget.conversation.contactId,
-    }));
-  }
+ void _checkContactStatus() {
+  print('📤 Check status envoyé pour : ${widget.conversation.contactId}');
+  widget.wsService.send(jsonEncode({
+    'type': 'check_status',
+    'targetId': widget.conversation.contactId,
+  }));
+}
 
   @override
   void dispose() {
@@ -193,12 +195,18 @@ class _ChatScreenState extends State<ChatScreen> {
                           color: isMe ? Colors.blue.shade600 : Colors.grey.shade200,
                           borderRadius: BorderRadius.circular(16),
                         ),
-                        child: Text(
-                          text,
-                          style: TextStyle(
-                            color: isMe ? Colors.white : Colors.black87,
-                            fontSize: 15,
+                        child: message['imageBase64'] != null && message['imageBase64'].isNotEmpty
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.memory(
+                            base64Decode(message['imageBase64']),
+                            width: 200,
+                            fit: BoxFit.cover,
                           ),
+                        )
+                      : Text(
+                          text,
+                          style: TextStyle(color: isMe ? Colors.white : Colors.black87, fontSize: 15),
                         ),
                       ),
                     );
@@ -238,6 +246,11 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.image, color: Colors.deepPurple),
+                    onPressed: _pickAndSendImage,
+                    tooltip: 'Envoyer une photo',
+                  ),
                   CircleAvatar(
                     backgroundColor: Colors.deepPurple,
                     child: IconButton(
@@ -253,4 +266,39 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
+
+  Future<void> _pickAndSendImage() async {
+  final ImagePicker picker = ImagePicker();
+  final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 60);
+  if (image == null) return;
+
+  final bytes = await image.readAsBytes();
+  final base64Str = base64Encode(bytes);
+
+  try {
+    // On préfixe pour identifier le payload image
+    final payloadToSend = "IMG:$base64Str";
+    final encryptedPayload = await widget.cryptoService.encryptMessage(payloadToSend, widget.conversation.publicKey);
+    
+    widget.wsService.sendMessage(widget.conversation.contactId, encryptedPayload, widget.myPubKey);
+
+    _messagesBox.add({
+      'text': 'Image',
+      'isMe': true,
+      'conversationId': widget.conversation.contactId,
+      'timestamp': DateTime.now().toIso8601String(),
+      'imageBase64': base64Str,
+    });
+
+    widget.conversation.messages.add(
+      ChatMessage(text: 'Image', isMe: true, timestamp: DateTime.now(), imageBase64: base64Str),
+    );
+
+    _scrollToBottom();
+  } catch (e) {
+    print('Erreur chiffrement/envoi image : $e');
+  }
 }
+
+}
+
